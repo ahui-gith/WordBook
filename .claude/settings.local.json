@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm *)",
+      "Bash(pnpm --version)",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"const pwa = require\\('vite-plugin-pwa'\\); console.log\\(Object.keys\\(pwa\\)\\)\")",
+      "Bash(node -e \"import\\('vite-plugin-pwa'\\).then\\(m => console.log\\(Object.keys\\(m\\)\\)\\)\")",
+      "Bash(node -e \"const w = require\\('./src/data/words.json'\\); console.log\\('Words count:', w.length\\)\")",
+      "Bash(node -e \"const s = require\\('./src/data/stories.json'\\); console.log\\('Stories count:', s.length\\)\")",
+      "Bash(node *)",
+      "Bash(git init *)",
+      "Bash(git add *)"
+    ]
+  }
+}

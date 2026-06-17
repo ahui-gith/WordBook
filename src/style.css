@@ -1,0 +1,152 @@
+@import "tailwindcss";
+
+/* ===== 基础样式 ===== */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== 移动端触摸优化 ===== */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  /* 禁止双击缩放 */
+  touch-action: manipulation;
+  /* 阻止 iOS 橡皮筋效果（页面级） */
+  overscroll-behavior-y: none;
+  /* iOS 惯性滚动 */
+  -webkit-overflow-scrolling: touch;
+}
+
+body {
+  /* 允许 body 内正常滚动 */
+  overscroll-behavior-y: auto;
+}
+
+/* 防止移动端长按弹出菜单（适用于按钮和卡片） */
+button, a, .card-container, .word-token {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 允许文本区域可选中 */
+.page-content p, .page-content span, input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ===== 移动端优先布局 ===== */
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ===== 页面内容区域 ===== */
+.page-content {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ===== 底部导航栏安全区 ===== */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ===== 顶部安全区 ===== */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* ===== 卡片翻转动画 ===== */
+.card-container {
+  perspective: 1000px;
+}
+
+.card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.5s;
+  transform-style: preserve-3d;
+}
+
+.card-inner.flipped {
+  transform: rotateY(180deg);
+}
+
+.card-front,
+.card-back {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+}
+
+.card-back {
+  transform: rotateY(180deg);
+}
+
+/* ===== iOS 输入框缩放修复 ===== */
+input[type="text"],
+input[type="number"],
+input[type="search"],
+textarea {
+  font-size: 16px; /* 阻止 iOS 在聚焦时自动缩放 */
+}
+
+/* ===== 触摸反馈增强 ===== */
+@media (hover: none) and (pointer: coarse) {
+  /* 仅在触摸设备上生效 */
+  button:active {
+    transform: scale(0.96);
+    transition: transform 0.1s ease;
+  }
+
+  a:active {
+    opacity: 0.7;
+  }
+}
+
+/* ===== 滚动条美化（移动端隐藏） ===== */
+@media (max-width: 480px) {
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
+
+/* ===== 横屏模式优化 ===== */
+@media (orientation: landscape) and (max-height: 500px) {
+  .page-content {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  #app {
+    max-width: 100%;
+    flex-direction: row;
+  }
+
+  .safe-area-bottom nav {
+    position: relative;
+  }
+}
+
+/* ===== PWA 独立窗口顶部间距 ===== */
+@media (display-mode: standalone) {
+  #app {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}

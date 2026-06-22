@@ -2,11 +2,12 @@
 /**
  * ReviewView — 复习主页
  *
- * 流程：
- *   1. 页面挂载时调用 fetchTodayWords 获取今日任务
- *   2. 显示第一张 FlashCard，用户点击反馈按钮
- *   3. recordReview 后自动切换到下一张卡片
- *   4. 全部复习完成后显示"今日任务完成"和统计
+ * 功能：
+ *   1. 支持两种复习方向：英→汉 / 汉→英（顶部切换）
+ *   2. 调用 fetchReviewWords 获取到期复习单词
+ *   3. 卡片翻转 + "不认识/模糊/认识"反馈按钮
+ *   4. SM-2 算法更新间隔
+ *   5. 全部复习完后显示统计
  */
 import { onMounted, computed, ref } from 'vue'
 import { useVocabulary } from '../composables/useVocabulary'
@@ -14,28 +15,35 @@ import FlashCard from '../components/FlashCard.vue'
 import StatsBar from '../components/StatsBar.vue'
 
 const {
-  todayWords,
+  reviewWords,
   isLoading,
   error,
-  stats,
-  fetchTodayWords,
+  reviewStats,
+  fetchReviewWords,
   recordReview
 } = useVocabulary()
 
+const direction = ref('en-zh') // 'en-zh' | 'zh-en'
+
 const isComplete = computed(() => {
-  return !isLoading.value && todayWords.value.length === 0
+  return !isLoading.value && reviewWords.value.length === 0
 })
 
 const currentWord = computed(() => {
-  return todayWords.value.length > 0 ? todayWords.value[0] : null
+  return reviewWords.value.length > 0 ? reviewWords.value[0] : null
 })
 
 const reviewError = ref(null)
 
-// 加载今日任务
+// 加载到期复习单词
 onMounted(async () => {
-  await fetchTodayWords()
+  await fetchReviewWords()
 })
+
+// 切换复习方向
+function switchDirection(dir) {
+  direction.value = dir
+}
 
 // 处理复习反馈
 async function handleReview(quality) {
@@ -53,37 +61,59 @@ async function handleReview(quality) {
 
 <template>
   <div class="px-4 py-6 flex flex-col items-center">
-    <h1 class="text-2xl font-bold text-indigo-600 mb-6">📖 单词复习</h1>
+    <h1 class="text-2xl font-bold text-indigo-600 mb-4">🔄 单词复习</h1>
 
     <!-- 加载中 -->
     <div v-if="isLoading" class="flex items-center justify-center mt-20">
-      <p class="text-gray-400">加载今日单词中...</p>
+      <p class="text-gray-400">加载复习单词中...</p>
     </div>
 
     <!-- 加载出错 -->
     <div v-else-if="error" class="text-center mt-20">
       <p class="text-red-500 mb-4">{{ error }}</p>
       <button
-        @click="fetchTodayWords"
+        @click="fetchReviewWords"
         class="px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors"
       >
         重试
       </button>
     </div>
 
-    <!-- 今日任务完成 -->
+    <!-- 复习完成 -->
     <div v-else-if="isComplete" class="text-center mt-10">
       <p class="text-6xl mb-4">🎉</p>
-      <h2 class="text-xl font-bold text-gray-700 mb-2">今日任务完成</h2>
-      <p class="text-gray-400 mb-8">干得漂亮！明天继续保持哦～</p>
-      <StatsBar :stats="stats" />
+      <h2 class="text-xl font-bold text-gray-700 mb-2">今日复习完成</h2>
+      <p class="text-gray-400 mb-8">继续保持，记忆更牢固！</p>
+      <StatsBar mode="reviewing" :stats="reviewStats" />
     </div>
 
     <!-- 复习中 -->
     <template v-else>
+      <!-- 复习方向切换 -->
+      <div class="flex gap-1 bg-gray-100 rounded-lg p-1 mb-4 w-full max-w-sm">
+        <button
+          @click="switchDirection('en-zh')"
+          class="flex-1 py-2 rounded-md text-sm font-medium transition-colors min-h-[40px]"
+          :class="direction === 'en-zh'
+            ? 'bg-white text-indigo-600 shadow-sm'
+            : 'text-gray-500 hover:text-gray-700'"
+        >
+          英 → 汉
+        </button>
+        <button
+          @click="switchDirection('zh-en')"
+          class="flex-1 py-2 rounded-md text-sm font-medium transition-colors min-h-[40px]"
+          :class="direction === 'zh-en'
+            ? 'bg-white text-indigo-600 shadow-sm'
+            : 'text-gray-500 hover:text-gray-700'"
+        >
+          汉 → 英
+        </button>
+      </div>
+
       <!-- 进度提示 -->
       <p class="text-sm text-gray-400 mb-4">
-        剩余 {{ todayWords.length }} 个单词
+        剩余 {{ reviewWords.length }} 个单词待复习
       </p>
 
       <!-- 复习错误提示 -->
@@ -92,12 +122,14 @@ async function handleReview(quality) {
       <!-- 单词卡片 -->
       <FlashCard
         :word="currentWord"
+        mode="reviewing"
+        :direction="direction"
         @review="handleReview"
       />
 
       <!-- 统计栏 -->
       <div class="mt-8 w-full">
-        <StatsBar :stats="stats" />
+        <StatsBar mode="reviewing" :stats="reviewStats" />
       </div>
     </template>
   </div>

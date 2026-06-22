@@ -1,12 +1,20 @@
 /**
- * 核心组合式函数 — 管理今日单词任务、复习记录、统计数据
+ * 核心组合式函数 — 管理学习任务、复习任务、统计数据
  *
- * 任务生成规则（来自开发文档）：
+ * 学习任务（LearnView）：
+ *   1. 获取所有无复习记录的单词（新词）
+ *   2. 无数量上限，自由学习
+ *   3. 点击"下一个"用 quality=2 标记已学，进入 SM-2 系统
+ *
+ * 复习任务（ReviewView）：
  *   1. 获取所有 nextReviewAt <= 当前时间 的到期单词
  *   2. 按 nextReviewAt 升序排序
- *   3. 取 dailyReviewCount 个复习单词
- *   4. 数量不足时从没有 review 记录的单词中补充，取 dailyNewWordCount 个
- *   5. 最终任务 = 复习任务 + 新学任务
+ *   3. 如果配置了 dailyReviewCount > 0，则限制数量；否则全部取出
+ *   4. 使用"不认识/模糊/认识"三个按钮 + SM-2 算法
+ *
+ * 每日统计持久化：
+ *   localStorage key: wordbook-daily-stats
+ *   格式: { date: '2026-06-22', newWordCount: 5, reviewCount: 10 }
  *
  * 配置优先级：localStorage > app-config.json
  */
@@ -28,27 +36,83 @@ function getConfig() {
   return { ...defaultConfig }
 }
 
+// ==================== 每日统计（localStorage 持久化） ====================
+function getTodayStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function loadDailyStats() {
+  try {
+    const raw = localStorage.getItem('wordbook-daily-stats')
+    if (raw) {
+      const stats = JSON.parse(raw)
+      if (stats.date === getTodayStr()) {
+        return { newWordCount: stats.newWordCount || 0, reviewCount: stats.reviewCount || 0 }
+      }
+    }
+  } catch { /* ignore */ }
+  return { newWordCount: 0, reviewCount: 0 }
+}
+
+function saveDailyStats(stats) {
+  try {
+    localStorage.setItem('wordbook-daily-stats', JSON.stringify({
+      date: getTodayStr(),
+      newWordCount: stats.newWordCount,
+      reviewCount: stats.reviewCount
+    }))
+  } catch { /* ignore */ }
+}
+
+// 初始化每日统计
+const dailyStats = ref(loadDailyStats())
+
 // ==================== 状态 ====================
-const todayWords = ref([])
+const newWords = ref([])          // 学习：新词列表
+const reviewWords = ref([])       // 复习：到期单词列表
 const isLoading = ref(false)
-const reviewedCount = ref(0)       // 今日已复习数量
-const newWordCount = ref(0)        // 今日新学数量
 const error = ref(null)
 
-// ==================== 统计 ====================
-const stats = computed(() => {
-  const config = getConfig()
+// ==================== 学习统计 ====================
+const learnStats = computed(() => {
   return {
-    reviewedCount: reviewedCount.value,
-    remainingCount: todayWords.value.length,
-    newWordCount: newWordCount.value,
-    dailyNewWordTarget: config.dailyNewWordCount,
-    dailyReviewTarget: config.dailyReviewCount
+    newWordCount: dailyStats.value.newWordCount,
+    remainingCount: newWords.value.length
   }
 })
 
-// ==================== 获取今日任务 ====================
-async function fetchTodayWords() {
+// ==================== 复习统计 ====================
+const reviewStats = computed(() => {
+  return {
+    reviewCount: dailyStats.value.reviewCount,
+    remainingCount: reviewWords.value.length
+  }
+})
+
+// ==================== 获取新词（学习页用） ====================
+async function fetchNewWords() {
+  isLoading.value = true
+  error.value = null
+
+  try {
+    // 获取所有已有复习记录的 wordId
+    const allReviews = await db.reviews.toArray()
+    const reviewedWordIds = new Set(allReviews.map(r => r.wordId))
+
+    // 获取未被复习过的单词（全部，无数量上限）
+    const allWords = await db.words.toArray()
+    newWords.value = allWords.filter(w => !reviewedWordIds.has(w.id))
+  } catch (err) {
+    console.error('获取新词失败：', err)
+    error.value = err.message || '获取新词失败'
+  } finally {
+    isLoading.value = false
+  }
+}
+
+// ==================== 获取到期复习单词（复习页用） ====================
+async function fetchReviewWords() {
   const config = getConfig()
   isLoading.value = true
   error.value = null
@@ -56,53 +120,65 @@ async function fetchTodayWords() {
   try {
     const now = Date.now()
 
-    // 第一步：获取所有到期复习单词，按 nextReviewAt 升序
-    const dueReviews = await db.reviews
+    // 获取所有到期复习单词，按 nextReviewAt 升序
+    let dueReviews = await db.reviews
       .where('nextReviewAt')
       .belowOrEqual(now)
       .sortBy('nextReviewAt')
 
-    // 第二步：取 dailyReviewCount 个复习单词
-    const reviewTasks = dueReviews.slice(0, config.dailyReviewCount)
-
-    // 第三步：如果数量不足，补充新单词
-    let newWordTasks = []
-    if (reviewTasks.length < config.dailyReviewCount) {
-      const needNew = config.dailyNewWordCount
-
-      // 获取所有已有复习记录的 wordId
-      const allReviews = await db.reviews.toArray()
-      const reviewedWordIds = new Set(allReviews.map(r => r.wordId))
-
-      // 获取未被复习过的单词
-      const allWords = await db.words.toArray()
-      const unreviewedWords = allWords.filter(w => !reviewedWordIds.has(w.id))
-
-      // 按 id 顺序取
-      newWordTasks = unreviewedWords.slice(0, needNew)
+    // 如果配置了每日复习上限（> 0），则限制数量
+    if (config.dailyReviewCount > 0) {
+      dueReviews = dueReviews.slice(0, config.dailyReviewCount)
     }
 
-    // 第四步：组装任务列表（复习任务在前，新学任务在后）
-    // 获取复习任务对应的单词
-    const reviewWordIds = reviewTasks.map(r => r.wordId)
-    const reviewWords = await db.words.bulkGet(reviewWordIds)
+    // 获取对应单词
+    const reviewWordIds = dueReviews.map(r => r.wordId)
+    const words = await db.words.bulkGet(reviewWordIds)
 
     // 过滤掉可能已被删除的单词
-    const validReviewWords = reviewWords.filter(Boolean)
-
-    todayWords.value = [...validReviewWords, ...newWordTasks]
+    reviewWords.value = words.filter(Boolean)
   } catch (err) {
-    console.error('获取今日单词失败：', err)
-    error.value = err.message || '获取今日单词失败'
+    console.error('获取复习单词失败：', err)
+    error.value = err.message || '获取复习单词失败'
   } finally {
     isLoading.value = false
   }
 }
 
-// ==================== 记录复习结果 ====================
+// ==================== 记录学习（学习页"下一个"） ====================
+async function recordLearning(wordId) {
+  try {
+    // 首次学习：用 quality=2（认识）作为初始状态，进入 SM-2 系统
+    const { interval, ease, repetitions } = calculateSM2(2, 1, 2.5, 0)
+    const nextReviewAt = Date.now() + interval * 24 * 60 * 60 * 1000
+
+    await db.reviews.put({
+      wordId,
+      nextReviewAt,
+      interval,
+      ease,
+      repetitions
+    })
+
+    // 从新词列表中移除
+    newWords.value = newWords.value.filter(w => w.id !== wordId)
+
+    // 更新每日统计
+    dailyStats.value = {
+      ...dailyStats.value,
+      newWordCount: dailyStats.value.newWordCount + 1
+    }
+    saveDailyStats(dailyStats.value)
+  } catch (err) {
+    console.error('记录学习结果失败：', err)
+    throw err
+  }
+}
+
+// ==================== 记录复习结果（复习页"不认识/模糊/认识"） ====================
 async function recordReview(wordId, quality) {
   try {
-    // 获取当前复习记录（可能不存在，新词首次复习）
+    // 获取当前复习记录
     const review = await db.reviews.get({ wordId })
 
     const base = review || {
@@ -111,9 +187,6 @@ async function recordReview(wordId, quality) {
       ease: 2.5,
       repetitions: 0
     }
-
-    // 判断是否为新词（之前没有复习记录）
-    const isNewWord = !review
 
     // 使用 SM-2 算法计算新参数
     const { interval, ease, repetitions } = calculateSM2(
@@ -127,7 +200,7 @@ async function recordReview(wordId, quality) {
 
     // 写入或更新复习记录
     await db.reviews.put({
-      id: review?.id,           // 已有记录保留 id，新记录由 Dexie 自增
+      id: review?.id,
       wordId,
       nextReviewAt,
       interval,
@@ -135,14 +208,15 @@ async function recordReview(wordId, quality) {
       repetitions
     })
 
-    // 从今日列表中移除已复习的单词
-    todayWords.value = todayWords.value.filter(w => w.id !== wordId)
+    // 从复习列表中移除
+    reviewWords.value = reviewWords.value.filter(w => w.id !== wordId)
 
-    // 更新统计
-    reviewedCount.value++
-    if (isNewWord) {
-      newWordCount.value++
+    // 更新每日统计
+    dailyStats.value = {
+      ...dailyStats.value,
+      reviewCount: dailyStats.value.reviewCount + 1
     }
+    saveDailyStats(dailyStats.value)
   } catch (err) {
     console.error('记录复习结果失败：', err)
     throw err
@@ -152,7 +226,8 @@ async function recordReview(wordId, quality) {
 // ==================== 保存/读取配置 ====================
 function saveConfig(config) {
   try {
-    localStorage.setItem('wordbook-config', JSON.stringify(config))
+    const merged = { ...getConfig(), ...config }
+    localStorage.setItem('wordbook-config', JSON.stringify(merged))
   } catch (err) {
     console.error('保存配置失败：', err)
   }
@@ -161,13 +236,15 @@ function saveConfig(config) {
 // ==================== 导出 ====================
 export function useVocabulary() {
   return {
-    todayWords,
+    newWords,
+    reviewWords,
     isLoading,
     error,
-    stats,
-    reviewedCount,
-    newWordCount,
-    fetchTodayWords,
+    learnStats,
+    reviewStats,
+    fetchNewWords,
+    fetchReviewWords,
+    recordLearning,
     recordReview,
     getConfig,
     saveConfig

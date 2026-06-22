@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import LearnView from '../views/LearnView.vue'
 import ReviewView from '../views/ReviewView.vue'
 import StoryView from '../views/StoryView.vue'
 import SettingsView from '../views/SettingsView.vue'
@@ -7,6 +8,12 @@ import NotFoundView from '../views/NotFoundView.vue'
 const routes = [
   {
     path: '/',
+    name: 'Learn',
+    component: LearnView,
+    meta: { title: '学习' }
+  },
+  {
+    path: '/review',
     name: 'Review',
     component: ReviewView,
     meta: { title: '复习' }

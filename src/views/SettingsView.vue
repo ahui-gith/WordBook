@@ -2,21 +2,22 @@
 /**
  * SettingsView — 设置页
  *
- * 功能：
- *   1. 修改每日复习数量（localStorage 保存）
- *   2. 修改每日新学数量（localStorage 保存）
- *   3. 重置数据（清空 words + reviews 并重新初始化）
- *   4. 导入导出入口
+ * 布局：
+ *   1. 每日任务（复习数量设置）
+ *   2. 单词本管理（列举、左滑删除、导入）
+ *   3. 个人数据管理（全量导入导出）
+ *   4. 危险操作（重置数据）
+ *   5. 关于
  */
 import { ref, onMounted } from 'vue'
 import { useVocabulary } from '../composables/useVocabulary'
 import db, { initDB } from '../db/index'
+import WordBookManager from '../components/WordBookManager.vue'
 import ImportExport from '../components/ImportExport.vue'
 
 const { getConfig, saveConfig } = useVocabulary()
 
-const dailyReviewCount = ref(20)
-const dailyNewWordCount = ref(10)
+const dailyReviewCount = ref(0)
 const isSaved = ref(false)
 const resetConfirm = ref(false)
 const resetMessage = ref('')
@@ -24,37 +25,32 @@ const resetMessageType = ref('success')
 
 onMounted(() => {
   const config = getConfig()
-  dailyReviewCount.value = config.dailyReviewCount
-  dailyNewWordCount.value = config.dailyNewWordCount
+  dailyReviewCount.value = config.dailyReviewCount ?? 0
 })
 
 // ==================== 保存配置 ====================
 function handleSave() {
-  saveConfig({
-    dailyReviewCount: dailyReviewCount.value,
-    dailyNewWordCount: dailyNewWordCount.value
-  })
+  saveConfig({ dailyReviewCount: dailyReviewCount.value })
   isSaved.value = true
-  setTimeout(() => {
-    isSaved.value = false
-  }, 2000)
+  setTimeout(() => { isSaved.value = false }, 2000)
 }
 
 // ==================== 重置数据 ====================
 async function handleReset() {
   try {
-    await db.transaction('rw', db.words, db.reviews, async () => {
+    await db.transaction('rw', db.wordBooks, db.words, db.reviews, async () => {
+      await db.wordBooks.clear()
       await db.words.clear()
       await db.reviews.clear()
     })
     // 重新初始化默认词库
     await initDB()
+    // 清空每日统计
+    localStorage.removeItem('wordbook-daily-stats')
     resetConfirm.value = false
     resetMessage.value = '数据已重置，默认词库已重新导入'
     resetMessageType.value = 'success'
-    setTimeout(() => {
-      resetMessage.value = ''
-    }, 4000)
+    setTimeout(() => { resetMessage.value = '' }, 4000)
   } catch (err) {
     console.error('重置失败：', err)
     resetMessage.value = '重置失败：' + (err.message || '未知错误')
@@ -62,12 +58,11 @@ async function handleReset() {
   }
 }
 
-function handleImported() {
-  resetMessage.value = '数据导入成功，页面将在下次进入复习时更新'
+// ==================== 导入/单词本变更回调 ====================
+function handleDataChanged() {
+  resetMessage.value = '数据已更新，页面将在下次进入时刷新'
   resetMessageType.value = 'success'
-  setTimeout(() => {
-    resetMessage.value = ''
-  }, 4000)
+  setTimeout(() => { resetMessage.value = '' }, 3000)
 }
 </script>
 
@@ -75,68 +70,50 @@ function handleImported() {
   <div class="px-4 py-6">
     <h1 class="text-2xl font-bold text-indigo-600 mb-6">⚙️ 设置</h1>
 
-    <!-- ===== 每日任务设置 ===== -->
+    <!-- ===== 每日任务 ===== -->
     <section class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4">
       <h2 class="text-base font-semibold text-gray-700 mb-4">每日任务</h2>
-
       <div class="space-y-4">
-        <!-- 每日复习数量 -->
         <div>
           <label class="flex items-center justify-between mb-2">
             <span class="text-sm text-gray-500">每日复习数量</span>
-            <span class="text-sm font-bold text-indigo-600">{{ dailyReviewCount }} 个</span>
+            <span class="text-sm font-bold text-indigo-600">
+              {{ dailyReviewCount === 0 ? '不限制' : `${dailyReviewCount} 个` }}
+            </span>
           </label>
           <input
             v-model.number="dailyReviewCount"
             type="range"
-            min="5"
+            min="0"
             max="50"
             step="5"
             class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
           />
           <div class="flex justify-between text-xs text-gray-300 mt-1">
-            <span>5</span>
+            <span>不限制</span>
             <span>50</span>
           </div>
         </div>
-
-        <!-- 每日新学数量 -->
-        <div>
-          <label class="flex items-center justify-between mb-2">
-            <span class="text-sm text-gray-500">每日新学数量</span>
-            <span class="text-sm font-bold text-indigo-600">{{ dailyNewWordCount }} 个</span>
-          </label>
-          <input
-            v-model.number="dailyNewWordCount"
-            type="range"
-            min="5"
-            max="30"
-            step="5"
-            class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-          />
-          <div class="flex justify-between text-xs text-gray-300 mt-1">
-            <span>5</span>
-            <span>30</span>
-          </div>
-        </div>
       </div>
-
-      <!-- 保存按钮 -->
       <button
         @click="handleSave"
         class="mt-4 w-full py-2.5 rounded-lg font-medium transition-all text-white"
-        :class="isSaved
-          ? 'bg-green-500'
-          : 'bg-indigo-500 hover:bg-indigo-600 active:scale-95'"
+        :class="isSaved ? 'bg-green-500' : 'bg-indigo-500 hover:bg-indigo-600 active:scale-95'"
       >
         {{ isSaved ? '✅ 已保存' : '💾 保存设置' }}
       </button>
     </section>
 
-    <!-- ===== 数据管理 ===== -->
+    <!-- ===== 单词本管理 ===== -->
     <section class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4">
-      <h2 class="text-base font-semibold text-gray-700 mb-4">数据管理</h2>
-      <ImportExport @imported="handleImported" />
+      <h2 class="text-base font-semibold text-gray-700 mb-4">📖 单词本管理</h2>
+      <WordBookManager @changed="handleDataChanged" />
+    </section>
+
+    <!-- ===== 个人数据管理 ===== -->
+    <section class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4">
+      <h2 class="text-base font-semibold text-gray-700 mb-4">💾 个人数据管理</h2>
+      <ImportExport @imported="handleDataChanged" />
     </section>
 
     <!-- ===== 危险操作 ===== -->
@@ -144,7 +121,6 @@ function handleImported() {
       <h2 class="text-base font-semibold text-red-500 mb-2">危险操作</h2>
       <p class="text-sm text-gray-400 mb-4">重置将清空所有学习数据并重新导入默认词库</p>
 
-      <!-- 未确认时显示按钮 -->
       <button
         v-if="!resetConfirm"
         @click="resetConfirm = true"
@@ -153,7 +129,6 @@ function handleImported() {
         🔄 重置所有数据
       </button>
 
-      <!-- 确认步骤 -->
       <div v-else class="space-y-3">
         <p class="text-sm text-red-500 font-medium text-center">确定要重置所有数据吗？此操作不可撤销！</p>
         <div class="flex gap-3">
@@ -172,13 +147,10 @@ function handleImported() {
         </div>
       </div>
 
-      <!-- 操作提示 -->
       <p
         v-if="resetMessage"
         class="mt-3 text-sm px-3 py-2 rounded-lg"
-        :class="resetMessageType === 'error'
-          ? 'bg-red-50 text-red-600'
-          : 'bg-green-50 text-green-600'"
+        :class="resetMessageType === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'"
       >
         {{ resetMessage }}
       </p>

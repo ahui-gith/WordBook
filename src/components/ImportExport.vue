@@ -1,46 +1,59 @@
 <script setup>
 /**
- * ImportExport — 数据导入导出组件
+ * ImportExport — 个人数据管理组件
  *
- * 导出格式（按开发文档）：
- *   { version: 1, exportedAt: timestamp, words: [...], reviews: [...] }
+ * 导出全量备份（v2 格式）：
+ *   { version: 2, type: "full-backup", exportedAt, wordBooks, words, reviews, config }
  *
- * 导入：校验 version/words/reviews 合法性，清空旧数据后批量写入
+ * 导入：校验格式 → 清空旧数据 → 批量写入 → 恢复配置
  */
 import { ref } from 'vue'
 import db from '../db/index'
+import { useVocabulary } from '../composables/useVocabulary'
 
 const emit = defineEmits(['imported'])
+
+const { getConfig, saveConfig } = useVocabulary()
 
 const isExporting = ref(false)
 const isImporting = ref(false)
 const message = ref('')
-const messageType = ref('success') // 'success' | 'error'
+const messageType = ref('success')
 
 function showMsg(text, type = 'success') {
   message.value = text
   messageType.value = type
-  setTimeout(() => {
-    message.value = ''
-  }, 4000)
+  setTimeout(() => { message.value = '' }, 5000)
 }
 
 // ==================== 导出 ====================
 async function handleExport() {
   isExporting.value = true
   try {
-    const words = await db.words.toArray()
-    const reviews = await db.reviews.toArray()
+    const [wordBooks, words, reviews] = await Promise.all([
+      db.wordBooks.toArray(),
+      db.words.toArray(),
+      db.reviews.toArray()
+    ])
+
+    const config = getConfig()
 
     const data = {
-      version: 1,
+      version: 2,
+      type: 'full-backup',
       exportedAt: Date.now(),
+      wordBooks: wordBooks.map(b => ({
+        id: b.id,
+        name: b.name,
+        createdAt: b.createdAt
+      })),
       words: words.map(w => ({
         id: w.id,
         word: w.word,
         pos: w.pos || '',
         meaning: w.meaning || '',
-        phonetic: w.phonetic || ''
+        phonetic: w.phonetic || '',
+        bookId: w.bookId
       })),
       reviews: reviews.map(r => ({
         wordId: r.wordId,
@@ -48,20 +61,26 @@ async function handleExport() {
         interval: r.interval,
         ease: r.ease,
         repetitions: r.repetitions
-      }))
+      })),
+      config: {
+        dailyReviewCount: config.dailyReviewCount ?? 0
+      }
     }
 
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `vocab-backup-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `wordbook-full-backup-${new Date().toISOString().slice(0, 10)}.json`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
 
-    showMsg(`导出成功！${data.words.length} 个单词，${data.reviews.length} 条复习记录`, 'success')
+    showMsg(
+      `导出成功！${data.wordBooks.length} 个单词本、${data.words.length} 个单词、${data.reviews.length} 条记录`,
+      'success'
+    )
   } catch (err) {
     console.error('导出失败：', err)
     showMsg('导出失败：' + (err.message || '未知错误'), 'error')
@@ -90,7 +109,7 @@ async function handleFileChange(event) {
     if (!data || typeof data !== 'object') {
       throw new Error('无效的 JSON 格式')
     }
-    if (data.version !== 1) {
+    if (data.version !== 1 && data.version !== 2) {
       throw new Error(`不支持的备份版本: ${data.version}`)
     }
     if (!Array.isArray(data.words)) {
@@ -108,9 +127,26 @@ async function handleFileChange(event) {
     }
 
     // 清空旧数据并写入
-    await db.transaction('rw', db.words, db.reviews, async () => {
+    await db.transaction('rw', db.wordBooks, db.words, db.reviews, async () => {
+      await db.wordBooks.clear()
       await db.words.clear()
       await db.reviews.clear()
+
+      // 写入单词本（v2 格式）
+      if (data.wordBooks && data.wordBooks.length > 0) {
+        await db.wordBooks.bulkPut(data.wordBooks)
+      } else {
+        // 兼容 v1 格式：没有 wordBooks，创建默认单词本
+        const defaultBookId = await db.wordBooks.put({
+          name: '默认单词本',
+          createdAt: Date.now()
+        })
+        // 确保所有单词有 bookId
+        data.words.forEach(w => {
+          if (!w.bookId) w.bookId = defaultBookId
+        })
+      }
+
       await db.words.bulkPut(data.words)
       await db.reviews.bulkPut(data.reviews.map(r => ({
         wordId: r.wordId,
@@ -121,14 +157,22 @@ async function handleFileChange(event) {
       })))
     })
 
-    showMsg(`导入成功！${data.words.length} 个单词，${data.reviews.length} 条复习记录`, 'success')
+    // 恢复配置
+    if (data.config) {
+      saveConfig({ dailyReviewCount: data.config.dailyReviewCount ?? 0 })
+    }
+
+    const bookCount = data.wordBooks?.length || 1
+    showMsg(
+      `导入成功！${bookCount} 个单词本、${data.words.length} 个单词、${data.reviews.length} 条记录`,
+      'success'
+    )
     emit('imported')
   } catch (err) {
     console.error('导入失败：', err)
     showMsg('导入失败：' + (err.message || '未知错误'), 'error')
   } finally {
     isImporting.value = false
-    // 重置 input 以便重新选择同一文件
     if (fileInput.value) {
       fileInput.value.value = ''
     }
@@ -138,6 +182,12 @@ async function handleFileChange(event) {
 
 <template>
   <div class="space-y-3">
+    <!-- 导出内容说明 -->
+    <div class="text-xs text-gray-400 space-y-0.5">
+      <p>导出内容包括：</p>
+      <p class="ml-2">📖 单词本 · 📝 单词数据 · 📊 学习与复习记录 · ⚙️ 个人配置</p>
+    </div>
+
     <!-- 操作按钮 -->
     <div class="flex gap-3">
       <button
@@ -145,14 +195,14 @@ async function handleFileChange(event) {
         :disabled="isExporting"
         class="flex-1 py-2.5 rounded-lg font-medium transition-all text-white bg-indigo-500 hover:bg-indigo-600 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {{ isExporting ? '导出中...' : '📤 导出数据' }}
+        {{ isExporting ? '导出中...' : '📤 导出全部数据' }}
       </button>
       <button
         @click="triggerImport"
         :disabled="isImporting"
         class="flex-1 py-2.5 rounded-lg font-medium transition-all text-white bg-emerald-500 hover:bg-emerald-600 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {{ isImporting ? '导入中...' : '📥 导入数据' }}
+        {{ isImporting ? '导入中...' : '📥 导入全部数据' }}
       </button>
     </div>
 

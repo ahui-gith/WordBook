@@ -5,7 +5,8 @@ import { computed } from 'vue'
 const route = useRoute()
 
 const tabs = [
-  { path: '/', label: '复习', icon: '📖' },
+  { path: '/', label: '学习', icon: '📖' },
+  { path: '/review', label: '复习', icon: '🔄' },
   { path: '/story', label: '故事', icon: '📚' },
   { path: '/settings', label: '设置', icon: '⚙️' }
 ]

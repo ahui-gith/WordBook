@@ -10,7 +10,10 @@
       "Bash(node -e \"const s = require\\('./src/data/stories.json'\\); console.log\\('Stories count:', s.length\\)\")",
       "Bash(node *)",
       "Bash(git init *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m 'feat: WordBook 单词本 PWA 应用初始化 *)",
+      "Bash(git remote *)",
+      "Bash(git push *)"
     ]
   }
 }
